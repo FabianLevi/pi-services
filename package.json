@@ -1,0 +1,34 @@
+{
+  "name": "pi-services",
+  "version": "0.1.0",
+  "description": "Pi extension: per-project service definitions with background execution and live log access for the agent.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "fabian@nblock.ai",
+  "packageManager": "pnpm@11.1.1",
+  "files": [
+    "extensions",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "prepack": "pnpm test && node scripts/verify-package-files.mjs",
+    "prepublishOnly": "pnpm test && node scripts/verify-package-files.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "typebox": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

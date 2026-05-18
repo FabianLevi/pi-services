@@ -1,0 +1,13 @@
+node_modules
+.pi/
+.pi-lens/
+*.log
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# TS build artifacts
+*.tsbuildinfo
