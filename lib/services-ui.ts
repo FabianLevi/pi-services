@@ -1,6 +1,15 @@
 import { watch, type FSWatcher } from "node:fs";
-import type { ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type {
+	ExtensionContext,
+	Theme,
+	ThemeColor,
+} from "@earendil-works/pi-coding-agent";
+import {
+	Key,
+	matchesKey,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import type { ServiceDefinition } from "./services-config.ts";
 import {
@@ -32,10 +41,16 @@ export async function showServicesUi(
 	actions: ServicesUiActions,
 ): Promise<ServicesUiResult> {
 	return ctx.ui.custom<ServicesUiResult>(
-		(tui, theme, _kb, done) => new ServicesOverlay(tui, theme, cwd, declared, actions, done),
+		(tui, theme, _kb, done) =>
+			new ServicesOverlay(tui, theme, cwd, declared, actions, done),
 		{
 			overlay: true,
-			overlayOptions: { anchor: "center", width: "92%", maxHeight: "88%", minWidth: 70 },
+			overlayOptions: {
+				anchor: "center",
+				width: "92%",
+				maxHeight: "88%",
+				minWidth: 70,
+			},
 		},
 	);
 }
@@ -88,7 +103,9 @@ class ServicesOverlay {
 	}
 
 	render(width: number): string[] {
-		return this.mode === "tail" ? this.renderTail(width) : this.renderList(width);
+		return this.mode === "tail"
+			? this.renderTail(width)
+			: this.renderList(width);
 	}
 
 	invalidate(): void {}
@@ -97,23 +114,38 @@ class ServicesOverlay {
 
 	private rowNames(): string[] {
 		const state = readState(this.cwd);
-		const names = new Set<string>([...this.declared.keys(), ...Object.keys(state)]);
+		const names = new Set<string>([
+			...this.declared.keys(),
+			...Object.keys(state),
+		]);
 		return Array.from(names).sort();
 	}
 
 	private handleListInput(data: string): void {
-		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
+		if (
+			matchesKey(data, Key.escape) ||
+			matchesKey(data, Key.ctrl("c")) ||
+			data === "q"
+		) {
 			this.done({ action: "close" });
 			return;
 		}
 		const names = this.rowNames();
 		if (matchesKey(data, Key.up)) {
-			this.selectionIndex = clamp(this.selectionIndex - 1, 0, Math.max(0, names.length - 1));
+			this.selectionIndex = clamp(
+				this.selectionIndex - 1,
+				0,
+				Math.max(0, names.length - 1),
+			);
 			this.tui.requestRender();
 			return;
 		}
 		if (matchesKey(data, Key.down)) {
-			this.selectionIndex = clamp(this.selectionIndex + 1, 0, Math.max(0, names.length - 1));
+			this.selectionIndex = clamp(
+				this.selectionIndex + 1,
+				0,
+				Math.max(0, names.length - 1),
+			);
 			this.tui.requestRender();
 			return;
 		}
@@ -136,7 +168,10 @@ class ServicesOverlay {
 		}
 	}
 
-	private async runAction(name: string, kind: "start" | "stop" | "restart"): Promise<void> {
+	private async runAction(
+		name: string,
+		kind: "start" | "stop" | "restart",
+	): Promise<void> {
 		this.busy = `${kind} ${name}…`;
 		this.tui.requestRender();
 		try {
@@ -156,48 +191,100 @@ class ServicesOverlay {
 		const innerWidth = Math.max(40, width - 2);
 		const state = readState(this.cwd);
 		const names = this.rowNames();
-		this.selectionIndex = clamp(this.selectionIndex, 0, Math.max(0, names.length - 1));
+		this.selectionIndex = clamp(
+			this.selectionIndex,
+			0,
+			Math.max(0, names.length - 1),
+		);
 
 		const top = this.border("┌", "┐", innerWidth);
 		const bottom = this.border("└", "┘", innerWidth);
-		const divider = this.frame(this.theme.fg("borderMuted", "─".repeat(innerWidth)), innerWidth);
+		const divider = this.frame(
+			this.theme.fg("borderMuted", "─".repeat(innerWidth)),
+			innerWidth,
+		);
 
 		const title = this.theme.fg("accent", this.theme.bold("pi-services"));
-		const hint = this.theme.fg("dim", `${names.length} ${names.length === 1 ? "service" : "services"}`);
-		const spacing = Math.max(1, innerWidth - visibleWidth(title) - visibleWidth(hint));
-		const header = this.frame(`${title}${" ".repeat(spacing)}${hint}`, innerWidth);
+		const hint = this.theme.fg(
+			"dim",
+			`${names.length} ${names.length === 1 ? "service" : "services"}`,
+		);
+		const spacing = Math.max(
+			1,
+			innerWidth - visibleWidth(title) - visibleWidth(hint),
+		);
+		const header = this.frame(
+			`${title}${" ".repeat(spacing)}${hint}`,
+			innerWidth,
+		);
 
 		const body: string[] = [];
 		if (names.length === 0) {
-			body.push(this.frame(this.theme.fg("dim", "  No services. Create .pi/services.json."), innerWidth));
+			body.push(
+				this.frame(
+					this.theme.fg("dim", "  No services. Create .pi/services.json."),
+					innerWidth,
+				),
+			);
 		} else {
 			for (let i = 0; i < names.length; i += 1) {
 				const name = names[i]!;
-				body.push(this.frame(this.renderRow(name, state[name], i === this.selectionIndex, innerWidth - 2), innerWidth));
+				body.push(
+					this.frame(
+						this.renderRow(
+							name,
+							state[name],
+							i === this.selectionIndex,
+							innerWidth - 2,
+						),
+						innerWidth,
+					),
+				);
 			}
 		}
 
 		const footerLines = [
-			this.frame(this.theme.fg("dim", " ↑↓ select  ·  enter/t live tail  ·  s start  ·  x stop  ·  r restart"), innerWidth),
-			this.frame(this.theme.fg("dim", this.busy ? ` ${this.busy}` : " esc/q close"), innerWidth),
+			this.frame(
+				this.theme.fg(
+					"dim",
+					" ↑↓ select  ·  enter/t live tail  ·  s start  ·  x stop  ·  r restart",
+				),
+				innerWidth,
+			),
+			this.frame(
+				this.theme.fg("dim", this.busy ? ` ${this.busy}` : " esc/q close"),
+				innerWidth,
+			),
 		];
 
 		return [top, header, divider, ...body, divider, ...footerLines, bottom];
 	}
 
-	private renderRow(name: string, entry: ServiceStateEntry | undefined, selected: boolean, width: number): string {
+	private renderRow(
+		name: string,
+		entry: ServiceStateEntry | undefined,
+		selected: boolean,
+		width: number,
+	): string {
 		const prefix = selected ? this.theme.fg("accent", "› ") : "  ";
 		const status: ServiceStatus = entry?.status ?? STATUS.STOPPED;
 		const glyph = statusGlyph(status);
 		const color = statusColor(status);
 		const def = this.declared.get(name);
 		const extra =
-			status === STATUS.EXITED && entry?.exitCode !== undefined ? ` (exit ${entry.exitCode})` : "";
+			status === STATUS.EXITED && entry?.exitCode !== undefined
+				? ` (exit ${entry.exitCode})`
+				: "";
 		const pidPart = entry ? `pid=${entry.pid} ` : "";
 		const cmd = def?.cmd ?? entry?.cmd ?? "";
 		const head = `${prefix}${this.theme.fg(color, glyph)} ${this.theme.fg(selected ? "accent" : "text", padRight(name, 16))} ${this.theme.fg(color, padRight(status + extra, 18))} ${this.theme.fg("dim", pidPart)}`;
 		const headWidth = visibleWidth(head);
-		const cmdStr = cmd ? this.theme.fg("dim", truncateToWidth(cmd, Math.max(0, width - headWidth - 2))) : "";
+		const cmdStr = cmd
+			? this.theme.fg(
+					"dim",
+					truncateToWidth(cmd, Math.max(0, width - headWidth - 2)),
+				)
+			: "";
 		return truncateToWidth(` ${head}${cmdStr}`, width + 1);
 	}
 
@@ -229,9 +316,15 @@ class ServicesOverlay {
 				this.loadTail();
 				this.tui.requestRender();
 			});
-			this.logWatcher.on("error", () => {});
-		} catch {
-			// File may not exist yet; periodic poll will retry via loadTail on next render path.
+			this.logWatcher.on("error", (err) => {
+				this.busy = `log watcher unavailable: ${err.message}`;
+			});
+		} catch (err) {
+			// File may not exist yet; periodic render polling will retry and still load logs.
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT") {
+				this.busy = `log watcher unavailable: ${(err as Error).message}`;
+			}
 		}
 	}
 
@@ -239,14 +332,18 @@ class ServicesOverlay {
 		if (this.logWatcher) {
 			try {
 				this.logWatcher.close();
-			} catch {}
+			} catch (err) {
+				this.busy = `log watcher close failed: ${(err as Error).message}`;
+			}
 			this.logWatcher = undefined;
 		}
 	}
 
 	private loadTail(): void {
 		if (!this.tailName) return;
-		const { lines } = tailLogFile(logPathFor(this.cwd, this.tailName), { tail: TAIL_LINES });
+		const { lines } = tailLogFile(logPathFor(this.cwd, this.tailName), {
+			tail: TAIL_LINES,
+		});
 		this.tailLines = lines;
 	}
 
@@ -289,18 +386,34 @@ class ServicesOverlay {
 	private renderTail(width: number): string[] {
 		const innerWidth = Math.max(40, width - 2);
 		const name = this.tailName!;
+		// Attached runners are started outside this UI and may create/truncate the
+		// log file after tail mode is already open. Poll on every render so the
+		// overlay doesn't depend solely on fs.watch for live log updates.
+		this.loadTail();
+		if (!this.logWatcher) this.openWatcher(name);
 		const entry = readState(this.cwd)[name];
 		const status: ServiceStatus = entry?.status ?? STATUS.STOPPED;
 		const color = statusColor(status);
 
 		const top = this.border("┌", "┐", innerWidth);
 		const bottom = this.border("└", "┘", innerWidth);
-		const divider = this.frame(this.theme.fg("borderMuted", "─".repeat(innerWidth)), innerWidth);
+		const divider = this.frame(
+			this.theme.fg("borderMuted", "─".repeat(innerWidth)),
+			innerWidth,
+		);
 
 		const title = `${this.theme.fg("accent", this.theme.bold(name))} ${this.theme.fg(color, statusGlyph(status))} ${this.theme.fg(color, status)}${entry ? this.theme.fg("dim", `  pid=${entry.pid}`) : ""}`;
-		const followBadge = this.tailFollow ? this.theme.fg("success", "● follow") : this.theme.fg("dim", "○ paused");
-		const spacing = Math.max(1, innerWidth - visibleWidth(title) - visibleWidth(followBadge));
-		const header = this.frame(`${title}${" ".repeat(spacing)}${followBadge}`, innerWidth);
+		const followBadge = this.tailFollow
+			? this.theme.fg("success", "● follow")
+			: this.theme.fg("dim", "○ paused");
+		const spacing = Math.max(
+			1,
+			innerWidth - visibleWidth(title) - visibleWidth(followBadge),
+		);
+		const header = this.frame(
+			`${title}${" ".repeat(spacing)}${followBadge}`,
+			innerWidth,
+		);
 
 		const rows = this.tui.terminal.rows ?? 28;
 		const viewport = Math.max(8, Math.floor(rows * 0.82) - 6);
@@ -309,13 +422,18 @@ class ServicesOverlay {
 		if (this.tailFollow) this.tailScroll = maxScroll;
 		else this.tailScroll = clamp(this.tailScroll, 0, maxScroll);
 
-		const slice = this.tailLines.slice(this.tailScroll, this.tailScroll + viewport);
+		const slice = this.tailLines.slice(
+			this.tailScroll,
+			this.tailScroll + viewport,
+		);
 		const body: string[] = [];
 		if (total === 0) {
 			body.push(this.frame(this.theme.fg("dim", "  (no log yet)"), innerWidth));
 		} else {
 			for (const line of slice) {
-				body.push(this.frame(` ${truncateToWidth(line, innerWidth - 1)}`, innerWidth));
+				body.push(
+					this.frame(` ${truncateToWidth(line, innerWidth - 1)}`, innerWidth),
+				);
 			}
 		}
 		while (body.length < viewport) body.push(this.frame("", innerWidth));
@@ -326,10 +444,16 @@ class ServicesOverlay {
 				: `${total}/${total}`;
 		const footerLines = [
 			this.frame(
-				this.theme.fg("dim", ` ↑↓ scroll  ·  g top  ·  G follow  ·  x stop  ·  r restart  ·  esc back  ·  ${positionInfo}`),
+				this.theme.fg(
+					"dim",
+					` ↑↓ scroll  ·  g top  ·  G follow  ·  x stop  ·  r restart  ·  esc back  ·  ${positionInfo}`,
+				),
 				innerWidth,
 			),
-			this.frame(this.theme.fg("dim", this.busy ? ` ${this.busy}` : " "), innerWidth),
+			this.frame(
+				this.theme.fg("dim", this.busy ? ` ${this.busy}` : " "),
+				innerWidth,
+			),
 		];
 
 		return [top, header, divider, ...body, divider, ...footerLines, bottom];
@@ -345,7 +469,10 @@ class ServicesOverlay {
 	}
 
 	private border(left: string, right: string, innerWidth: number): string {
-		return this.theme.fg("borderAccent", `${left}${"─".repeat(innerWidth)}${right}`);
+		return this.theme.fg(
+			"borderAccent",
+			`${left}${"─".repeat(innerWidth)}${right}`,
+		);
 	}
 }
 

@@ -41,12 +41,33 @@ Declare commands (`backend -> uv run -m api.main`) in `<cwd>/.pi/services.json`.
 
 Invalid entries are dropped with a warning.
 
+## Attached runner
+
+Run a service in your own terminal while Pi tracks its state and live logs:
+
+```sh
+pi-services run frontend -- pnpm dev
+```
+
+This keeps stdout/stderr visible in that terminal and tees both streams to `.pi/services/logs/frontend.log`, while `.pi/services/state.json` records the child PID/status. Press `Ctrl+C` in that terminal to stop the command; Pi will mark the service exited.
+
+A common workflow is to wrap your normal dev script:
+
+```json
+{ "scripts": { "dev": "pi-services run frontend -- vite" } }
+```
+
+Then `pnpm dev` is automatically visible to Pi as the `frontend` service.
+
 ## Slash commands
 
 - `/services ui` — interactive overlay. Keys: `↑↓` select, `enter`/`t` tail, `s` start, `x` stop, `r` restart, `esc`/`q` close. In tail: `↑↓` scroll, `g` top, `G` follow, `x` stop, `r` restart.
 - `/services` — list declared services + live state
 - `/services start|stop|restart <name>`
 - `/services logs <name> [tail]`
+- `/services run <name>` — print `pi-services run <name> -- <cmd>` for use in another terminal
+
+For attached services, `/services stop <name>` does not kill the external terminal process; stop it where you started it.
 
 ## Agent tool
 
@@ -61,7 +82,7 @@ When services are running, a wrap-aware row renders below the editor with `● n
 ```
 <project>/.pi/services.json            # config
 <project>/.pi/services/state.json      # live PID/status
-<project>/.pi/services/logs/<name>.log # truncated on each start
+<project>/.pi/services/logs/<name>.log # truncated on each start/run
 ```
 
 State is reconciled at session start (dead PIDs dropped). Services spawned by the current runtime are stopped on `session_shutdown` and on terminal teardown (SIGHUP / SIGINT / SIGTERM / Ctrl+Z / normal exit) so they don't outlive pi.

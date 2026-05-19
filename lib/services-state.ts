@@ -13,12 +13,15 @@ export const STATUS = {
 
 export type ServiceStatus = (typeof STATUS)[keyof typeof STATUS];
 
+export type ServiceRunnerName = "process" | "attached";
+
 export interface ServiceStateEntry {
 	pid: number;
 	status: ServiceStatus;
 	kind: ServiceKind;
 	cmd: string;
 	startedAt: string;
+	runner?: ServiceRunnerName;
 	exitedAt?: string;
 	exitCode?: number;
 	exitSignal?: string;
@@ -46,7 +49,8 @@ export function readState(projectCwd: string): ServicesState {
 	try {
 		const raw = readFileSync(statePath(projectCwd), "utf8");
 		const parsed: unknown = JSON.parse(raw);
-		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+			return {};
 		return parsed as ServicesState;
 	} catch (err: unknown) {
 		if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
@@ -80,7 +84,11 @@ export function reconcileStaleEntries(state: ServicesState): {
 } {
 	const next: ServicesState = {};
 	const removed: string[] = [];
-	const liveStatuses: ServiceStatus[] = [STATUS.RUNNING, STATUS.STARTING, STATUS.STOPPING];
+	const liveStatuses: ServiceStatus[] = [
+		STATUS.RUNNING,
+		STATUS.STARTING,
+		STATUS.STOPPING,
+	];
 	for (const [name, entry] of Object.entries(state)) {
 		if (liveStatuses.includes(entry.status) && !isProcessAlive(entry.pid)) {
 			removed.push(name);

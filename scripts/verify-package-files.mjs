@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = join(fileURLToPath(new URL("..", import.meta.url)));
 
 const requiredPaths = [
+	"bin/pi-services.mjs",
 	"extensions/services.ts",
 	"lib/services-config.ts",
 	"lib/services-state.ts",
@@ -27,4 +28,6 @@ if (missing.length > 0) {
 	process.exit(1);
 }
 
-console.log(`pi-services package resource check passed (${requiredPaths.length} files).`);
+console.log(
+	`pi-services package resource check passed (${requiredPaths.length} files).`,
+);

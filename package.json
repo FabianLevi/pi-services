@@ -7,11 +7,15 @@
   "author": "fabian@nblock.ai",
   "packageManager": "pnpm@11.1.1",
   "files": [
+    "bin",
     "extensions",
     "lib",
     "README.md",
     "LICENSE"
   ],
+  "bin": {
+    "pi-services": "./bin/pi-services.mjs"
+  },
   "pi": {
     "extensions": ["./extensions"]
   },

@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 export type ServiceKind = "server" | "task";
 
@@ -36,6 +36,20 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 
 export function configPathFor(projectCwd: string): string {
 	return join(projectCwd, ".pi", "services.json");
+}
+
+// Walk up from `start` to the nearest ancestor containing `.pi/services.json`.
+// Mirrors `bin/pi-services.mjs` so the extension and the attached runner agree
+// on which directory is the project root — otherwise pi launched from a
+// subdirectory reads state from the wrong `.pi/` and shows no services.
+export function findProjectCwd(start: string): string {
+	let cur = resolve(start);
+	while (true) {
+		if (existsSync(join(cur, ".pi", "services.json"))) return cur;
+		const parent = dirname(cur);
+		if (parent === cur) return resolve(start);
+		cur = parent;
+	}
 }
 
 export function parseServicesConfig(raw: unknown): ConfigParseResult {

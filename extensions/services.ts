@@ -6,6 +6,7 @@ import type {
 import { Type, type Static } from "typebox";
 
 import {
+	findProjectCwd,
 	loadServicesConfig,
 	type ServiceDefinition,
 } from "../lib/services-config.ts";
@@ -63,7 +64,11 @@ function pickRuntime(): ProjectRuntime | undefined {
 	return undefined;
 }
 
-function ensureRuntime(cwd: string): ProjectRuntime {
+function ensureRuntime(ctxCwd: string): ProjectRuntime {
+	// Resolve to the nearest ancestor with `.pi/services.json` so the extension
+	// agrees with bin/pi-services.mjs on the project root. Without this, pi
+	// launched from a subdirectory reads state from the wrong `.pi/`.
+	const cwd = findProjectCwd(ctxCwd);
 	let rt = runtimes.get(cwd);
 	if (!rt) {
 		rt = { cwd, services: new Map(), ownedPids: new Set() };
@@ -89,6 +94,15 @@ function statusGlyph(s: ServiceStatus): string {
 		case STATUS.STOPPED:
 			return "○";
 	}
+}
+
+function shellQuotePart(part: string): string {
+	if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(part)) return part;
+	return `'${part.replaceAll("'", `'\\''`)}'`;
+}
+
+function fmtRunCommand(name: string, svc: ServiceDefinition): string {
+	return `pi-services run ${shellQuotePart(name)} -- ${svc.cmd}`;
 }
 
 function fmtHeaderLine(name: string, entry: ServiceStateEntry): string {
@@ -158,7 +172,9 @@ function notify(
 
 const WIDGET_KEY = "pi-services:banner";
 
-function statusColorName(s: ServiceStatus): "success" | "warning" | "error" | "dim" {
+function statusColorName(
+	s: ServiceStatus,
+): "success" | "warning" | "error" | "dim" {
 	switch (s) {
 		case STATUS.RUNNING:
 			return "success";
@@ -177,7 +193,11 @@ interface BannerRow {
 	status: ServiceStatus;
 }
 
-const BANNER_VISIBLE: ServiceStatus[] = [STATUS.RUNNING, STATUS.STARTING, STATUS.STOPPING];
+const BANNER_VISIBLE: ServiceStatus[] = [
+	STATUS.RUNNING,
+	STATUS.STARTING,
+	STATUS.STOPPING,
+];
 
 function buildBannerRows(rt: ProjectRuntime): BannerRow[] {
 	const state = readState(rt.cwd);
@@ -211,7 +231,8 @@ function refreshBanner(rt: ProjectRuntime, ctx: ExtensionContext): void {
 				let curStyled = "";
 				let curWidth = 0;
 				for (const c of chips) {
-					const add = curWidth === 0 ? c.plain.length : SEP.length + c.plain.length;
+					const add =
+						curWidth === 0 ? c.plain.length : SEP.length + c.plain.length;
 					if (curWidth > 0 && curWidth + add > width) {
 						lines.push(curStyled);
 						curStyled = c.styled;
@@ -229,7 +250,6 @@ function refreshBanner(rt: ProjectRuntime, ctx: ExtensionContext): void {
 	);
 }
 
-
 interface StartResult {
 	ok: boolean;
 	reason?: string;
@@ -242,7 +262,10 @@ async function startService(
 	ctx: ExtensionContext,
 ): Promise<StartResult> {
 	const existing = readState(rt.cwd)[svc.name];
-	if (existing && (existing.status === STATUS.RUNNING || existing.status === STATUS.STARTING)) {
+	if (
+		existing &&
+		(existing.status === STATUS.RUNNING || existing.status === STATUS.STARTING)
+	) {
 		return { ok: true, reason: "already running", entry: existing };
 	}
 
@@ -275,6 +298,7 @@ async function startService(
 		status: STATUS.STARTING,
 		kind: svc.kind,
 		cmd: svc.cmd,
+		runner: "process",
 		startedAt: nowIso(),
 	};
 	writeState(rt.cwd, { ...readState(rt.cwd), [svc.name]: entry });
@@ -302,7 +326,10 @@ async function startService(
 	// servers can return ok:true even though the child failed immediately.
 	await new Promise((r) => setImmediate(r));
 	if (spawnError) {
-		return { ok: false, reason: `spawn error: ${(spawnError as Error).message}` };
+		return {
+			ok: false,
+			reason: `spawn error: ${(spawnError as Error).message}`,
+		};
 	}
 
 	if (svc.kind === "task") return { ok: true, entry };
@@ -313,10 +340,17 @@ async function startService(
 			timeoutMs: READY_TIMEOUT_MS,
 			pollMs: READY_POLL_MS,
 		});
-		if (spawnError) return { ok: false, reason: `spawn error: ${(spawnError as Error).message}` };
+		if (spawnError)
+			return {
+				ok: false,
+				reason: `spawn error: ${(spawnError as Error).message}`,
+			};
 		const cur = readState(rt.cwd);
 		if (result.matched && cur[svc.name]?.status === STATUS.STARTING) {
-			writeState(rt.cwd, updateEntry(cur, svc.name, { status: STATUS.RUNNING }));
+			writeState(
+				rt.cwd,
+				updateEntry(cur, svc.name, { status: STATUS.RUNNING }),
+			);
 			refreshHeader(rt, ctx);
 			return { ok: true, entry: cur[svc.name] };
 		}
@@ -345,11 +379,22 @@ async function stopService(
 	if (!entry) return false;
 	if (entry.status === STATUS.RUNNING || entry.status === STATUS.STARTING) {
 		if (!rt.ownedPids.has(entry.pid)) {
+			if (entry.runner === "attached") {
+				notify(
+					ctx,
+					`${name}: attached service is owned by terminal pid=${entry.pid}; stop it there (usually Ctrl+C)`,
+					"warning",
+				);
+				return true;
+			}
 			// Stale entry from a prior runtime — the PID may have been reused.
 			// Don't signal it; just mark the entry stopped so the user can move on.
 			writeState(
 				rt.cwd,
-				updateEntry(state, name, { status: STATUS.STOPPED, exitedAt: nowIso() }),
+				updateEntry(state, name, {
+					status: STATUS.STOPPED,
+					exitedAt: nowIso(),
+				}),
 			);
 			refreshHeader(rt, ctx);
 			return true;
@@ -387,7 +432,8 @@ function summarizeStateForPrompt(rt: ProjectRuntime): string {
 				PROMPT_ERROR_SCAN_LINES,
 				PROMPT_ERRORS_PER_SERVICE,
 			);
-			for (const err of errs) lines.push(`      ${clampString(err, PROMPT_ERROR_CLAMP)}`);
+			for (const err of errs)
+				lines.push(`      ${clampString(err, PROMPT_ERROR_CLAMP)}`);
 		}
 	}
 	return lines.join("\n");
@@ -398,7 +444,11 @@ const serviceLogsSchema = Type.Object({
 		description: "Service name as declared in .pi/services.json",
 	}),
 	tail: Type.Optional(
-		Type.Integer({ minimum: TAIL_MIN, maximum: TAIL_MAX, default: TAIL_DEFAULT }),
+		Type.Integer({
+			minimum: TAIL_MIN,
+			maximum: TAIL_MAX,
+			default: TAIL_DEFAULT,
+		}),
 	),
 	grep: Type.Optional(
 		Type.String({ description: "Case-insensitive regex filter" }),
@@ -424,7 +474,11 @@ function killAllOwnedSync(signal: NodeJS.Signals = "SIGTERM"): void {
 			try {
 				process.kill(-pid, signal);
 			} catch {
-				try { process.kill(pid, signal); } catch { /* gone */ }
+				try {
+					process.kill(pid, signal);
+				} catch {
+					/* gone */
+				}
 			}
 		}
 	}
@@ -458,14 +512,16 @@ export default function (pi: ExtensionAPI): void {
 	installTeardownHandlers();
 	pi.on("session_start", async (_event, ctx) => {
 		const rt = ensureRuntime(ctx.cwd);
-		const loaded = loadServicesConfig(ctx.cwd);
+		const loaded = loadServicesConfig(rt.cwd);
 		for (const w of loaded.warnings) notify(ctx, w, "warning");
 		rt.services.clear();
 		for (const [name, def] of Object.entries(loaded.config.services)) {
 			rt.services.set(name, def);
 		}
 
-		const { state: reconciled, removed } = reconcileStaleEntries(readState(rt.cwd));
+		const { state: reconciled, removed } = reconcileStaleEntries(
+			readState(rt.cwd),
+		);
 		if (removed.length > 0) {
 			writeState(rt.cwd, reconciled);
 			notify(ctx, `pi-services: cleared stale entries: ${removed.join(", ")}`);
@@ -474,7 +530,11 @@ export default function (pi: ExtensionAPI): void {
 		const toStart = Array.from(rt.services.values()).filter((s) => {
 			if (s.kind !== "server" || !s.autoStart) return false;
 			const entry = reconciled[s.name];
-			return !entry || entry.status === STATUS.EXITED || entry.status === STATUS.STOPPED;
+			return (
+				!entry ||
+				entry.status === STATUS.EXITED ||
+				entry.status === STATUS.STOPPED
+			);
 		});
 		for (const svc of toStart) {
 			const r = await startService(rt, svc, ctx);
@@ -502,7 +562,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		const rt = runtimes.get(ctx.cwd);
+		const rt = runtimes.get(findProjectCwd(ctx.cwd));
 		if (!rt) return;
 		// Only stop services this runtime spawned. Entries persisted by a
 		// prior runtime point at PIDs the OS may have reused — see fix 3a.
@@ -514,17 +574,34 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("services", {
 		description:
-			"Manage project services. Subcommands: ui, list (default), start <name>, stop <name>, restart <name>, logs <name> [tail].",
+			"Manage project services. Subcommands: ui, list (default), start <name>, stop <name>, restart <name>, logs <name> [tail], run <name>.",
 		getArgumentCompletions: (prefix) => {
 			const SUBS: { value: string; label: string; description: string }[] = [
-				{ value: "ui", label: "ui", description: "interactive overlay (picker + live tail)" },
-				{ value: "list", label: "list", description: "list declared services + live state" },
-				{ value: "start", label: "start", description: "start a declared service" },
+				{
+					value: "ui",
+					label: "ui",
+					description: "interactive overlay (picker + live tail)",
+				},
+				{
+					value: "list",
+					label: "list",
+					description: "list declared services + live state",
+				},
+				{
+					value: "start",
+					label: "start",
+					description: "start a declared service",
+				},
 				{ value: "stop", label: "stop", description: "stop a running service" },
 				{ value: "restart", label: "restart", description: "stop then start" },
 				{ value: "logs", label: "logs", description: "show last N log lines" },
+				{
+					value: "run",
+					label: "run",
+					description: "print attached-runner command",
+				},
 			];
-			const NEEDS_NAME = new Set(["start", "stop", "restart", "logs"]);
+			const NEEDS_NAME = new Set(["start", "stop", "restart", "logs", "run"]);
 			const tokens = prefix.split(/\s+/);
 			const hasTrailingSpace = prefix.length > 0 && /\s$/.test(prefix);
 
@@ -541,11 +618,17 @@ export default function (pi: ExtensionAPI): void {
 			const namePrefix = hasTrailingSpace ? "" : (tokens[1] ?? "");
 			const rt = pickRuntime();
 			if (!rt) return null;
-			const names = Array.from(rt.services.keys()).filter((n) => n.startsWith(namePrefix));
+			const names = Array.from(rt.services.keys()).filter((n) =>
+				n.startsWith(namePrefix),
+			);
 			if (names.length === 0) return null;
 			return names.map((n) => {
 				const def = rt.services.get(n)!;
-				return { value: `${sub} ${n}`, label: n, description: `${def.kind}: ${def.cmd}` };
+				return {
+					value: `${sub} ${n}`,
+					label: n,
+					description: `${def.kind}: ${def.cmd}`,
+				};
 			});
 		},
 		handler: async (args, ctx) => {
@@ -555,7 +638,8 @@ export default function (pi: ExtensionAPI): void {
 			const rt = ensureRuntime(ctx.cwd);
 
 			if (sub === "ui") {
-				if (!ctx.hasUI) return notify(ctx, "ui not available in this mode", "warning");
+				if (!ctx.hasUI)
+					return notify(ctx, "ui not available in this mode", "warning");
 				await showServicesUi(ctx, rt.cwd, rt.services, {
 					start: async (n) => {
 						const svc = rt.services.get(n);
@@ -591,42 +675,59 @@ export default function (pi: ExtensionAPI): void {
 			}
 
 			if (sub === "start") {
-				if (!name) return notify(ctx, "usage: /services start <name>", "warning");
+				if (!name)
+					return notify(ctx, "usage: /services start <name>", "warning");
 				const svc = rt.services.get(name);
 				if (!svc) return notify(ctx, `unknown service: ${name}`, "error");
 				const r = await startService(rt, svc, ctx);
-				if (!r.ok) notify(ctx, `${name}: ${r.reason ?? "start failed"}`, "error");
+				if (!r.ok)
+					notify(ctx, `${name}: ${r.reason ?? "start failed"}`, "error");
 				return;
 			}
 
 			if (sub === "stop") {
-				if (!name) return notify(ctx, "usage: /services stop <name>", "warning");
+				if (!name)
+					return notify(ctx, "usage: /services stop <name>", "warning");
 				const ok = await stopService(rt, name, ctx);
 				if (!ok) notify(ctx, `${name}: not in state`, "warning");
 				return;
 			}
 
 			if (sub === "restart") {
-				if (!name) return notify(ctx, "usage: /services restart <name>", "warning");
+				if (!name)
+					return notify(ctx, "usage: /services restart <name>", "warning");
 				const svc = rt.services.get(name);
 				if (!svc) return notify(ctx, `unknown service: ${name}`, "error");
 				await stopService(rt, name, ctx);
 				const r = await startService(rt, svc, ctx);
-				if (!r.ok) notify(ctx, `${name}: ${r.reason ?? "restart failed"}`, "error");
+				if (!r.ok)
+					notify(ctx, `${name}: ${r.reason ?? "restart failed"}`, "error");
 				return;
 			}
 
 			if (sub === "logs") {
-				if (!name) return notify(ctx, "usage: /services logs <name> [tail]", "warning");
-				const parsed = Number.parseInt(parts[2] ?? String(TAIL_DEFAULT), 10) || TAIL_DEFAULT;
+				if (!name)
+					return notify(ctx, "usage: /services logs <name> [tail]", "warning");
+				const parsed =
+					Number.parseInt(parts[2] ?? String(TAIL_DEFAULT), 10) || TAIL_DEFAULT;
 				const tail = Math.max(TAIL_MIN, Math.min(TAIL_MAX, parsed));
 				const { lines } = tailLogFile(logPathFor(rt.cwd, name), { tail });
-				return notify(ctx, lines.length > 0 ? lines.join("\n") : "(no log yet)");
+				return notify(
+					ctx,
+					lines.length > 0 ? lines.join("\n") : "(no log yet)",
+				);
+			}
+
+			if (sub === "run") {
+				if (!name) return notify(ctx, "usage: /services run <name>", "warning");
+				const svc = rt.services.get(name);
+				if (!svc) return notify(ctx, `unknown service: ${name}`, "error");
+				return notify(ctx, fmtRunCommand(name, svc));
 			}
 
 			return notify(
 				ctx,
-				`unknown subcommand: ${sub}. usage: /services [ui|list|start|stop|restart|logs] [<name>] [tail]`,
+				`unknown subcommand: ${sub}. usage: /services [ui|list|start|stop|restart|logs|run] [<name>] [tail]`,
 				"warning",
 			);
 		},
@@ -654,9 +755,10 @@ export default function (pi: ExtensionAPI): void {
 			const header = entry
 				? `service=${params.service} status=${entry.status} pid=${entry.pid}${entry.exitCode !== undefined ? ` exit=${entry.exitCode}` : ""}`
 				: `service=${params.service} status=not-running`;
-			const warnLine = warnings && warnings.length > 0
-				? `\nwarnings: ${warnings.join("; ")}`
-				: "";
+			const warnLine =
+				warnings && warnings.length > 0
+					? `\nwarnings: ${warnings.join("; ")}`
+					: "";
 			const body = lines.length > 0 ? lines.join("\n") : "(no log content)";
 			const text = `${header}${truncated ? `  (showing last ${tail} lines)` : ""}${warnLine}\n\n${body}`;
 			return {

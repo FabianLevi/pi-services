@@ -5,8 +5,17 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { ServiceDefinition } from "./services-config.ts";
 import { logPathFor } from "./services-state.ts";
 
+export type ChildProcessWithEvents = ChildProcess & {
+	pid?: number;
+	once(
+		event: "exit",
+		listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+	): unknown;
+	once(event: "error", listener: (err: Error) => void): unknown;
+};
+
 export interface SpawnedService {
-	child: ChildProcess;
+	child: ChildProcessWithEvents;
 	logPath: string;
 	logFd: number;
 	spawnError?: Error;
@@ -18,20 +27,26 @@ function resolveServiceCwd(projectCwd: string, cwd: string): string {
 	}
 	const resolved = resolve(projectCwd, cwd);
 	const rel = relative(projectCwd, resolved);
-	if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+	if (
+		rel === ".." ||
+		rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+	) {
 		throw new Error(`service cwd escapes project root: ${cwd}`);
 	}
 	return resolved;
 }
 
-export function spawnService(projectCwd: string, svc: ServiceDefinition): SpawnedService {
+export function spawnService(
+	projectCwd: string,
+	svc: ServiceDefinition,
+): SpawnedService {
 	const logPath = logPathFor(projectCwd, svc.name);
 	mkdirSync(resolve(logPath, ".."), { recursive: true });
 	const serviceCwd = resolveServiceCwd(projectCwd, svc.cwd);
 
 	const logFd = openSync(logPath, "w");
 
-	let child: ChildProcess;
+	let child: ChildProcessWithEvents;
 	try {
 		child = spawn(svc.cmd, [], {
 			shell: true,
@@ -42,7 +57,7 @@ export function spawnService(projectCwd: string, svc: ServiceDefinition): Spawne
 			// signal the whole tree via process.kill(-pid, ...) — otherwise
 			// SIGTERM hits only the shell and grandchildren may survive.
 			detached: true,
-		});
+		}) as ChildProcessWithEvents;
 	} catch (err) {
 		closeSync(logFd);
 		throw err;
@@ -81,7 +96,8 @@ export async function waitForReadyPattern(
 			if (pattern.test(content)) return { matched: true };
 		} catch (err: unknown) {
 			const code = (err as NodeJS.ErrnoException).code;
-			if (code !== "ENOENT") return { matched: false, reason: (err as Error).message };
+			if (code !== "ENOENT")
+				return { matched: false, reason: (err as Error).message };
 		}
 		await new Promise((r) => setTimeout(r, opts.pollMs));
 	}
@@ -107,7 +123,10 @@ function signalGroupOrPid(pid: number, sig: NodeJS.Signals): void {
 	}
 }
 
-export async function terminateProcess(pid: number, graceMs: number): Promise<void> {
+export async function terminateProcess(
+	pid: number,
+	graceMs: number,
+): Promise<void> {
 	if (!Number.isInteger(pid) || pid <= 0) return;
 	signalGroupOrPid(pid, "SIGTERM");
 	await new Promise((r) => setTimeout(r, graceMs));
